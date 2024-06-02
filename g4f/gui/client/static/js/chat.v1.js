@@ -11,12 +11,13 @@ const imageInput        = document.getElementById("image");
 const cameraInput       = document.getElementById("camera");
 const fileInput         = document.getElementById("file");
 const microLabel        = document.querySelector(".micro-label");
-const inputCount        = document.getElementById("input-count");
+const inputCount        = document.getElementById("input-count").querySelector(".text");
 const providerSelect    = document.getElementById("provider");
 const modelSelect       = document.getElementById("model");
 const modelProvider     = document.getElementById("model2");
 const systemPrompt      = document.getElementById("systemPrompt");
 const settings          = document.querySelector(".settings");
+const chat              = document.querySelector(".conversation");
 const album             = document.querySelector(".images");
 
 let prompt_lock = false;
@@ -106,8 +107,9 @@ const register_message_buttons = async () => {
                 let playlist = [];
                 function play_next() {
                     const next = playlist.shift();
-                    if (next)
+                    if (next && el.dataset.do_play) {
                         next.play();
+                    }
                 }
                 if (el.dataset.stopped) {
                     el.classList.remove("blink")
@@ -132,7 +134,7 @@ const register_message_buttons = async () => {
                 speechText = speechText.replaceAll(/\[(.+)\]\(.+\)/gm, "($1)");
                 speechText = speechText.replaceAll(/```[a-z]+/gm, "");
                 speechText = filter_message(speechText.replaceAll("`", "").replaceAll("#", ""))
-                const lines = speechText.trim().split(/\n|;/).filter(v => v.trim());
+                const lines = speechText.trim().split(/\n|;/).filter(v => count_words(v));
 
                 window.onSpeechResponse = (url) => {
                     if (!el.dataset.stopped) {
@@ -174,6 +176,40 @@ const register_message_buttons = async () => {
                 let line = lines.shift();
                 handleGenerateSpeech(line);
             });
+        }
+    });
+    document.querySelectorAll(".message .fa-rotate").forEach(async (el) => {
+        if (!("click" in el.dataset)) {
+            el.dataset.click = "true";
+            el.addEventListener("click", async () => {
+                const message_el = el.parentElement.parentElement.parentElement;
+                el.classList.add("clicked");
+                setTimeout(() => el.classList.remove("clicked"), 1000);
+                prompt_lock = true;
+                await hide_message(window.conversation_id, message_el.dataset.index);
+                window.token = message_id();
+                await ask_gpt(message_el.dataset.index);
+            })
+        }
+    });
+    document.querySelectorAll(".message .fa-whatsapp").forEach(async (el) => {
+        if (!el.parentElement.href) {
+            const text = el.parentElement.parentElement.parentElement.innerText;
+            el.parentElement.href = `https://wa.me/?text=${encodeURIComponent(text)}`;
+        }
+    });
+    document.querySelectorAll(".message .fa-print").forEach(async (el) => {
+        if (!("click" in el.dataset)) {
+            el.dataset.click = "true";
+            el.addEventListener("click", async () => {
+                const message_el = el.parentElement.parentElement.parentElement;
+                el.classList.add("clicked");
+                message_box.scrollTop = 0;
+                message_el.classList.add("print");
+                setTimeout(() => el.classList.remove("clicked"), 1000);
+                setTimeout(() => message_el.classList.remove("print"), 1000);
+                window.print()
+            })
         }
     });
 }
@@ -237,6 +273,8 @@ const handle_ask = async () => {
                     ${count_words_and_tokens(message, get_selected_model())}
                     <i class="fa-solid fa-volume-high"></i>
                     <i class="fa-regular fa-clipboard"></i>
+                    <a><i class="fa-brands fa-whatsapp"></i></a>
+                    <i class="fa-solid fa-print"></i>
                 </div>
             </div>
         </div>
@@ -254,9 +292,9 @@ const remove_cancel_button = async () => {
     }, 300);
 };
 
-const prepare_messages = (messages, filter_last_message=true) => {
+const prepare_messages = (messages, message_index = -1) => {
     // Removes none user messages at end
-    if (filter_last_message) {
+    if (message_index == -1) {
         let last_message;
         while (last_message = messages.pop()) {
             if (last_message["role"] == "user") {
@@ -264,14 +302,16 @@ const prepare_messages = (messages, filter_last_message=true) => {
                 break;
             }
         }
+    } else if (message_index >= 0) {
+        messages = messages.filter((_, index) => message_index >= index);
     }
 
     // Remove history, if it's selected
     if (document.getElementById('history')?.checked) {
-        if (filter_last_message) {
-            messages = [messages.pop()];
-        } else {
+        if (message_index == null) {
             messages = [messages.pop(), messages.pop()];
+        } else {
+            messages = [messages.pop()];
         }
     }
 
@@ -284,7 +324,7 @@ const prepare_messages = (messages, filter_last_message=true) => {
     }
     messages.forEach((new_message) => {
         // Include only not regenerated messages
-        if (!new_message.regenerate) {
+        if (new_message && !new_message.regenerate) {
             // Remove generated images from history
             new_message.content = filter_message(new_message.content);
             delete new_message.provider;
@@ -301,7 +341,7 @@ async function add_message_chunk(message) {
         window.provider_result = message.provider;
         content.querySelector('.provider').innerHTML = `
             <a href="${message.provider.url}" target="_blank">
-                ${message.provider.name}
+                ${message.provider.label ? message.provider.label : message.provider.name}
             </a>
             ${message.provider.model ? ' with ' + message.provider.model : ''}
         `
@@ -311,6 +351,8 @@ async function add_message_chunk(message) {
         window.error = message.error
         console.error(message.error);
         content_inner.innerHTML += `<p><strong>An error occured:</strong> ${message.error}</p>`;
+    } else if (message.type == "preview") {
+        content_inner.innerHTML = markdown_render(message.preview);
     } else if (message.type == "content") {
         window.text += message.content;
         html = markdown_render(window.text);
@@ -356,11 +398,11 @@ imageInput?.addEventListener("click", (e) => {
     }
 });
 
-const ask_gpt = async () => {
+const ask_gpt = async (message_index = -1) => {
     regenerate.classList.add(`regenerate-hidden`);
     messages = await get_messages(window.conversation_id);
     total_messages = messages.length;
-    messages = prepare_messages(messages);
+    messages = prepare_messages(messages, message_index);
 
     stop_generating.classList.remove(`stop_generating-hidden`);
 
@@ -477,12 +519,35 @@ const clear_conversation = async () => {
     }
 };
 
+async function set_conversation_title(conversation_id, title) {
+    conversation = await get_conversation(conversation_id)
+    conversation.new_title = title;
+    appStorage.setItem(
+        `conversation:${conversation.id}`,
+        JSON.stringify(conversation)
+    );
+}
+
 const show_option = async (conversation_id) => {
     const conv = document.getElementById(`conv-${conversation_id}`);
     const choi = document.getElementById(`cho-${conversation_id}`);
 
     conv.style.display = "none";
     choi.style.display  = "block";
+
+    const el = document.getElementById(`convo-${conversation_id}`);
+    const trash_el = el.querySelector(".fa-trash");
+    const title_el = el.querySelector("span.convo-title");
+    if (title_el) {
+        const left_el = el.querySelector(".left");
+        const input_el = document.createElement("input");
+        input_el.value = title_el.innerText;
+        input_el.classList.add("convo-title");
+        input_el.onfocus = () => trash_el.style.display = "none";
+        input_el.onchange = () => set_conversation_title(conversation_id, input_el.value);
+        left_el.removeChild(title_el);
+        left_el.appendChild(input_el);
+    }
 };
 
 const hide_option = async (conversation_id) => {
@@ -491,6 +556,19 @@ const hide_option = async (conversation_id) => {
 
     conv.style.display = "block";
     choi.style.display  = "none";
+
+    const el = document.getElementById(`convo-${conversation_id}`);
+    el.querySelector(".fa-trash").style.display = "";
+    const input_el = el.querySelector("input.convo-title");
+    if (input_el) {
+        const left_el = el.querySelector(".left");
+        const span_el = document.createElement("span");
+        span_el.innerText = input_el.value;
+        span_el.classList.add("convo-title");
+        span_el.onclick = () => set_conversation(conversation_id);
+        left_el.removeChild(input_el);
+        left_el.appendChild(span_el);
+    }
 };
 
 const delete_conversation = async (conversation_id) => {
@@ -544,7 +622,8 @@ const load_conversation = async (conversation_id, scroll=true) => {
         last_model = item.provider?.model;
         let next_i = parseInt(i) + 1;
         let next_provider = item.provider ? item.provider : (messages.length > next_i ? messages[next_i].provider : null);
-        let provider_link = item.provider?.name ? `<a href="${item.provider.url}" target="_blank">${item.provider.name}</a>` : "";
+        let provider_label = item.provider?.label ? item.provider.label : item.provider?.name;
+        let provider_link = item.provider?.name ? `<a href="${item.provider.url}" target="_blank">${provider_label}</a>` : "";
         let provider = provider_link ? `
             <div class="provider">
                 ${provider_link}
@@ -568,6 +647,8 @@ const load_conversation = async (conversation_id, scroll=true) => {
                         ${count_words_and_tokens(item.content, next_provider?.model)}
                         <i class="fa-solid fa-volume-high"></i>
                         <i class="fa-regular fa-clipboard"></i>
+                        <a><i class="fa-brands fa-whatsapp"></i></a>
+                        <i class="fa-solid fa-print"></i>
                     </div>
                 </div>
             </div>
@@ -575,7 +656,7 @@ const load_conversation = async (conversation_id, scroll=true) => {
     }
 
     if (window.GPTTokenizer_cl100k_base) {
-        const filtered = prepare_messages(messages, false);
+        const filtered = prepare_messages(messages, null);
         if (filtered.length > 0) {
             last_model = last_model?.startsWith("gpt-4") ? "gpt-4" : "gpt-3.5-turbo"
             let count_total = GPTTokenizer_cl100k_base?.encodeChat(filtered, last_model).length
@@ -642,15 +723,15 @@ async function save_system_message() {
         await save_conversation(window.conversation_id, conversation);
     }
 }
-
-const hide_last_message = async (conversation_id) => {
+const hide_message = async (conversation_id, message_index =- 1) => {
     const conversation = await get_conversation(conversation_id)
-    const last_message = conversation.items.pop();
+    message_index = message_index == -1 ? conversation.items.length - 1 : message_index
+    const last_message = message_index in conversation.items ? conversation.items[message_index] : null;
     if (last_message !== null) {
         if (last_message["role"] == "assistant") {
             last_message["regenerate"] = true;
         }
-        conversation.items.push(last_message);
+        conversation.items[message_index] = last_message;
     }
     await save_conversation(conversation_id, conversation);
 };
@@ -703,18 +784,15 @@ const load_conversations = async () => {
 
     let html = "";
     conversations.forEach((conversation) => {
-        if (conversation?.items.length > 0) {
-            let old_value = conversation.title;
+        if (conversation?.items.length > 0 && !conversation.new_title) {
             let new_value = (conversation.items[0]["content"]).trim();
             let new_lenght = new_value.indexOf("\n");
             new_lenght = new_lenght > 200 || new_lenght < 0 ? 200 : new_lenght;
-            conversation.title = new_value.substring(0, new_lenght);
-            if (conversation.title != old_value) {
-                appStorage.setItem(
-                    `conversation:${conversation.id}`,
-                    JSON.stringify(conversation)
-                );
-            }
+            conversation.new_title = new_value.substring(0, new_lenght);
+            appStorage.setItem(
+                `conversation:${conversation.id}`,
+                JSON.stringify(conversation)
+            );
         }
         let updated = "";
         if (conversation.updated) {
@@ -724,9 +802,10 @@ const load_conversations = async () => {
         }
         html += `
             <div class="convo" id="convo-${conversation.id}">
-                <div class="left" onclick="set_conversation('${conversation.id}')">
+                <div class="left">
                     <i class="fa-regular fa-comments"></i>
-                    <span class="convo-title"><span class="datetime">${updated}</span> ${conversation.title}</span>
+                    <span class="datetime" onclick="set_conversation('${conversation.id}')">${updated}</span>
+                    <span class="convo-title" onclick="set_conversation('${conversation.id}')">${conversation.new_title}</span>
                 </div>
                 <i onclick="show_option('${conversation.id}')" class="fa-solid fa-ellipsis-vertical" id="conv-${conversation.id}"></i>
                 <div id="cho-${conversation.id}" class="choise" style="display:none;">
@@ -751,9 +830,20 @@ document.getElementById("cancelButton").addEventListener("click", async () => {
 
 document.getElementById("regenerateButton").addEventListener("click", async () => {
     prompt_lock = true;
-    await hide_last_message(window.conversation_id);
+    await hide_message(window.conversation_id);
     window.token = message_id();
     await ask_gpt();
+});
+
+const hide_input = document.querySelector(".toolbar .hide-input");
+hide_input.addEventListener("click", async (e) => {
+    const icon = hide_input.querySelector("i");
+    const func = icon.classList.contains("fa-angles-down") ? "add" : "remove";
+    const remv = icon.classList.contains("fa-angles-down") ? "remove" : "add";
+    icon.classList[func]("fa-angles-up");
+    icon.classList[remv]("fa-angles-down");
+    document.querySelector(".conversation .user-input").classList[func]("hidden");
+    document.querySelector(".conversation .buttons").classList[func]("hidden");
 });
 
 const uuid = () => {
@@ -780,6 +870,7 @@ async function hide_sidebar() {
     sidebar.classList.remove("shown");
     sidebar_button.classList.remove("rotated");
     settings.classList.add("hidden");
+    chat.classList.remove("hidden");
     if (window.location.pathname == "/menu/" || window.location.pathname == "/settings/") {
         history.back();
     }
@@ -801,11 +892,13 @@ sidebar_button.addEventListener("click", (event) => {
 
 function open_settings() {
     if (settings.classList.contains("hidden")) {
+        chat.classList.add("hidden");
         sidebar.classList.remove("shown");
         settings.classList.remove("hidden");
         history.pushState({}, null, "/settings/");
     } else {
         settings.classList.add("hidden");
+        chat.classList.remove("hidden");
     }
 }
 
@@ -922,7 +1015,7 @@ colorThemes.forEach((themeOption) => {
 function count_tokens(model, text) {
     if (model) {
         if (window.llamaTokenizer)
-        if (model.startsWith("llama2") || model.startsWith("codellama")) {
+        if (model.startsWith("llama") || model.startsWith("codellama")) {
             return llamaTokenizer.encode(text).length;
         }
         if (window.mistralTokenizer)
@@ -956,7 +1049,7 @@ const count_input = async () => {
         if (countFocus.value) {
             inputCount.innerText = count_words_and_tokens(countFocus.value, get_selected_model());
         } else {
-            inputCount.innerHTML = "&nbsp;"
+            inputCount.innerText = "";
         }
     }, 100);
 };
@@ -1000,6 +1093,8 @@ async function on_api() {
     messageInput.addEventListener("keydown", async (evt) => {
         if (prompt_lock) return;
 
+        // If not mobile
+        if (!window.matchMedia("(pointer:coarse)").matches)
         if (evt.keyCode === 13 && !evt.shiftKey) {
             evt.preventDefault();
             console.log("pressed enter");
@@ -1037,8 +1132,11 @@ async function on_api() {
     await load_settings_storage()
 
     const hide_systemPrompt = document.getElementById("hide-systemPrompt")
+    const slide_systemPrompt_icon = document.querySelector(".slide-systemPrompt i");
     if (hide_systemPrompt.checked) {
         systemPrompt.classList.add("hidden");
+        slide_systemPrompt_icon.classList.remove("fa-angles-up");
+        slide_systemPrompt_icon.classList.add("fa-angles-down");
     }
     hide_systemPrompt.addEventListener('change', async (event) => {
         if (event.target.checked) {
@@ -1047,6 +1145,13 @@ async function on_api() {
             systemPrompt.classList.remove("hidden");
         }
     });
+    document.querySelector(".slide-systemPrompt")?.addEventListener("click", () => {
+        hide_systemPrompt.click();
+        let checked = hide_systemPrompt.checked;
+        systemPrompt.classList[checked ? "add": "remove"]("hidden");
+        slide_systemPrompt_icon.classList[checked ? "remove": "add"]("fa-angles-up");
+        slide_systemPrompt_icon.classList[checked ? "add": "remove"]("fa-angles-down");
+    });
     const messageInputHeight = document.getElementById("message-input-height");
     if (messageInputHeight) {
         if (messageInputHeight.value) {
@@ -1054,6 +1159,19 @@ async function on_api() {
         }
         messageInputHeight.addEventListener('change', async () => {
             messageInput.style.maxHeight = `${messageInputHeight.value}px`;
+        });
+    }
+    const darkMode = document.getElementById("darkMode");
+    if (darkMode) {
+        if (!darkMode.checked) {
+            document.body.classList.add("white");
+        }
+        darkMode.addEventListener('change', async (event) => {
+            if (event.target.checked) {
+                document.body.classList.remove("white");
+            } else {
+                document.body.classList.add("white");
+            }
         });
     }
 }
@@ -1074,7 +1192,7 @@ async function load_version() {
 }
 setTimeout(load_version, 2000);
 
-for (const el of [imageInput, cameraInput]) {
+[imageInput, cameraInput].forEach((el) => {
     el.addEventListener('click', async () => {
         el.value = '';
         if (imageInput.dataset.src) {
@@ -1082,7 +1200,7 @@ for (const el of [imageInput, cameraInput]) {
             delete imageInput.dataset.src
         }
     });
-}
+});
 
 fileInput.addEventListener('click', async (event) => {
     fileInput.value = '';
@@ -1202,12 +1320,14 @@ async function load_provider_models(providerIndex=null) {
     if (!providerIndex) {
         providerIndex = providerSelect.selectedIndex;
     }
+    modelProvider.innerHTML = '';
     const provider = providerSelect.options[providerIndex].value;
     if (!provider) {
+        modelProvider.classList.add("hidden");
+        modelSelect.classList.remove("hidden");
         return;
     }
     const models = await api('models', provider);
-    modelProvider.innerHTML = '';
     if (models.length > 0) {
         modelSelect.classList.add("hidden");
         modelProvider.classList.remove("hidden");
@@ -1261,31 +1381,20 @@ if (SpeechRecognition) {
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
 
-    function may_stop() {
-        if (microLabel.classList.contains("recognition")) {
-            recognition.stop();
-        }
-    }
-
     let startValue;
-    let timeoutHandle;
     let lastDebounceTranscript;
     recognition.onstart = function() {
         microLabel.classList.add("recognition");
         startValue = messageInput.value;
         lastDebounceTranscript = "";
-        timeoutHandle = window.setTimeout(may_stop, 10000);
     };
     recognition.onend = function() {
-        microLabel.classList.remove("recognition");
         messageInput.focus();
     };
     recognition.onresult = function(event) {
         if (!event.results) {
             return;
         }
-        window.clearTimeout(timeoutHandle);
-
         let result = event.results[event.resultIndex];
         let isFinal = result.isFinal && (result[0].confidence > 0);
         let transcript = result[0].transcript;
@@ -1303,14 +1412,12 @@ if (SpeechRecognition) {
             messageInput.style.height = messageInput.scrollHeight  + "px";
             messageInput.scrollTop = messageInput.scrollHeight;
         }
-
-        timeoutHandle = window.setTimeout(may_stop, transcript ? 10000 : 8000);
     };
 
     microLabel.addEventListener("click", () => {
         if (microLabel.classList.contains("recognition")) {
-            window.clearTimeout(timeoutHandle);
             recognition.stop();
+            microLabel.classList.remove("recognition");
         } else {
             const lang = document.getElementById("recognition-language")?.value;
             recognition.lang = lang || navigator.language;

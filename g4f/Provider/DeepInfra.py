@@ -8,10 +8,14 @@ class DeepInfra(Openai):
     label = "DeepInfra"
     url = "https://deepinfra.com"
     working = True
-    needs_auth = False
+    needs_auth = True
     supports_stream = True
     supports_message_history = True
-    default_model = 'HuggingFaceH4/zephyr-orpo-141b-A35b-v0.1'
+    default_model = "meta-llama/Meta-Llama-3-70B-Instruct"
+    default_vision_model = "llava-hf/llava-1.5-7b-hf"
+    model_aliases = {
+        'dbrx-instruct': 'databricks/dbrx-instruct',
+    }
 
     @classmethod
     def get_models(cls):
@@ -32,14 +36,6 @@ class DeepInfra(Openai):
         max_tokens: int = 1028,
         **kwargs
     ) -> AsyncResult:
-        
-        if not '/' in model:
-            models = {
-                'mixtral-8x22b': 'HuggingFaceH4/zephyr-orpo-141b-A35b-v0.1',
-                'dbrx-instruct': 'databricks/dbrx-instruct',
-            }
-            model = models.get(model, model)
-        
         headers = {
             'Accept-Encoding': 'gzip, deflate, br',
             'Accept-Language': 'en-US',

@@ -7,3 +7,5 @@ from .Poe           import Poe
 from .Openai        import Openai
 from .Groq          import Groq
 from .OpenRouter    import OpenRouter
+from .OpenaiAccount import OpenaiAccount
+from .PerplexityApi import PerplexityApi
